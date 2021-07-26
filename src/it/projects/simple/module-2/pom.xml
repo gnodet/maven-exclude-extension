@@ -11,4 +11,11 @@
 
     <artifactId>module-2</artifactId>
 
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>module-1</artifactId>
+        </dependency>
+    </dependencies>
+
 </project>
