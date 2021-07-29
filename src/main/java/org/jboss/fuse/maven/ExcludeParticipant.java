@@ -48,16 +48,17 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         if (file.canRead()) {
             List<String> exclusions;
             try {
-                exclusions = Files.readAllLines(file.toPath(), Charset.defaultCharset());
+                exclusions = Files.readAllLines(file.toPath(), Charset.defaultCharset()).stream()
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
             } catch (IOException e) {
                 throw new MavenExecutionException("Unable to read exclusions", e);
             }
-            LOGGER.info("***********************************************************");
-            LOGGER.info("ExcludeExtension initialized with the following exclusions:");
-            for (String exclusion : exclusions) {
-                LOGGER.info("    {}", exclusion);
-            }
-            LOGGER.info("***********************************************************");
+            LOGGER.debug("***********************************************************");
+            LOGGER.info("ExcludeExtension initialized");
+            LOGGER.debug("Using following exclusions: {}", exclusions);
+            LOGGER.debug("***********************************************************");
             Map<File, MavenProject> projectsByPomLocation =  session.getAllProjects().stream()
                     .collect(Collectors.toMap(MavenProject::getFile, Function.identity()));
             Map<String, MavenProject> projectsByGroupArtifact =  session.getAllProjects().stream()
@@ -69,14 +70,14 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             for (MavenProject project : session.getAllProjects()) {
                 // Remove this project completely
                 if (exclusions.stream().noneMatch(e -> isMatchingProject(project, e, reactorDirectory))) {
-                    LOGGER.info("Project included: " + project);
+                    LOGGER.debug("Project included: " + project);
                     newAllProjects.add(project);
                     if (session.getProjects().contains(project)) {
                         newProjects.add(project);
                     }
                     // Remove modules
                     Map<String, List<Integer>> removed = excludeFromPom(exclusions, projectsByPomLocation, projectsByGroupArtifact,
-                            reactorDirectory, project, project.getModel());
+                            reactorDirectory, project);
 
                     if (!removed.isEmpty()) {
                         File pomFile = project.getFile();
@@ -87,14 +88,16 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                             throw new MavenExecutionException("Unable to write pom", e);
                         }
                     }
+                } else {
+                    LOGGER.debug("Project excluded: " + project);
                 }
             }
             session.setAllProjects(newAllProjects);
             session.setProjects(newProjects);
         } else {
-            LOGGER.info( "*****************************************************************************" );
-            LOGGER.info( "ExcludeExtension initialized but no exclusions provided in ./mvn/excludes.txt" );
-            LOGGER.info( "*****************************************************************************" );
+            LOGGER.debug( "*****************************************************************************" );
+            LOGGER.warn( "ExcludeExtension initialized but no exclusions provided in ./mvn/excludes.txt" );
+            LOGGER.debug( "*****************************************************************************" );
         }
     }
 
@@ -117,8 +120,8 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             Map<File, MavenProject> projectsByPomLocation,
             Map<String, MavenProject> projectsByGroupArtifact,
             File reactorDirectory,
-            MavenProject project,
-            Model model) {
+            MavenProject project) {
+        Model model = project.getModel();
         Map<String, List<Integer>> removed = new HashMap<>();
         List<Integer> removedModules = new ArrayList<>();
         for (int i = 0; i < model.getModules().size(); i++) {
@@ -135,7 +138,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         }
         if (!removedModules.isEmpty()) {
             removed.put("modules", removedModules);
-            removedModules.stream().sorted(Comparator.reverseOrder()).forEach(model.getModules()::remove);
+            removeIndices(model.getModules(), removedModules);
         }
         // Remove dependency management
         if (model.getDependencyManagement() != null) {
@@ -145,31 +148,68 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                 Dependency dependency = dependencies.get(i);
                 String ga = dependency.getGroupId() + ":" + dependency.getArtifactId();
                 MavenProject dep = projectsByGroupArtifact.get(ga);
-                if (dep != null && exclusions.stream().anyMatch(e -> isMatchingProject(dep, e, reactorDirectory))) {
+                boolean remove;
+                if (dep != null) {
+                    remove = exclusions.stream().anyMatch(e -> isMatchingProject(dep, e, reactorDirectory));
+                } else {
+                    remove = exclusions.stream().anyMatch(e -> isMatchingDependency(dependency, e, reactorDirectory));
+                }
+                if (remove) {
                     removedDepMgmt.add(i);
+                    LOGGER.debug("Removing managed dependency {} from {}", ga, project);
                 }
             }
             if (!removedDepMgmt.isEmpty()) {
                 removed.put("dependencyManagement/dependencies", removedDepMgmt);
-                removedDepMgmt.stream().sorted(Comparator.reverseOrder()).forEach(dependencies::remove);
+                removeIndices(dependencies, removedDepMgmt);
             }
         }
         // Remove dependencies
         List<Integer> removedDeps = new ArrayList<>();
         List<Dependency> dependencies = model.getDependencies();
+        List<String> removedGa = new ArrayList<>();
         for (int i = 0; i < dependencies.size(); i++) {
             Dependency dependency = dependencies.get(i);
             String ga = dependency.getGroupId() + ":" + dependency.getArtifactId();
             MavenProject dep = projectsByGroupArtifact.get(ga);
-            if (dep != null && exclusions.stream().anyMatch(e -> isMatchingProject(dep, e, reactorDirectory))) {
+            boolean remove;
+            if (dep != null) {
+                remove = exclusions.stream().anyMatch(e -> isMatchingProject(dep, e, reactorDirectory));
+            } else {
+                remove = exclusions.stream().anyMatch(e -> isMatchingDependency(dependency, e, reactorDirectory));
+            }
+            if (remove) {
                 removedDeps.add(i);
+                removedGa.add(ga);
+                LOGGER.debug("Removing dependency {} from {}", ga, project);
             }
         }
         if (!removedDeps.isEmpty()) {
             removed.put("dependencies", removedDeps);
-            removedDeps.stream().sorted(Comparator.reverseOrder()).forEach(dependencies::remove);
+            removeIndices(dependencies, removedDeps);
         }
         return removed;
+    }
+
+    private void removeIndices(List<?> l, List<Integer> li) {
+        li.stream().sorted(Comparator.reverseOrder()).forEach(i -> l.remove((int) i));
+    }
+
+    private boolean isMatchingDependency(Dependency dependency, String selector, File reactorDirectory) {
+        // [groupId]:artifactId
+        if (selector.indexOf(':') >= 0) {
+            String id = ':' + dependency.getArtifactId();
+            if (id.equals(selector)) {
+                LOGGER.debug("Dependency {} matches '{}'", dependency, selector);
+                return true;
+            }
+            id = dependency.getGroupId() + id;
+            if (id.equals(selector)) {
+                LOGGER.debug("Dependency {} matches '{}'", dependency, selector);
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isMatchingProject(MavenProject project, String selector, File reactorDirectory) {
@@ -177,10 +217,12 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         if (selector.indexOf(':') >= 0) {
             String id = ':' + project.getArtifactId();
             if (id.equals(selector)) {
+                LOGGER.debug("Project {} matches '{}'", project, selector);
                 return true;
             }
             id = project.getGroupId() + id;
             if (id.equals(selector)) {
+                LOGGER.debug("Project {} matches '{}'", project, selector);
                 return true;
             }
         }
@@ -188,9 +230,15 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         else if (reactorDirectory != null) {
             File selectedProject = new File(new File(reactorDirectory, selector).toURI().normalize());
             if (selectedProject.isFile()) {
-                return selectedProject.equals(project.getFile());
+                if (selectedProject.equals(project.getFile())) {
+                    LOGGER.debug("Project {} matches '{}'", project, selector);
+                    return true;
+                }
             } else if (selectedProject.isDirectory()) {
-                return selectedProject.equals(project.getBasedir());
+                if (selectedProject.equals(project.getBasedir())) {
+                    LOGGER.debug("Project {} matches '{}'", project, selector);
+                    return true;
+                }
             }
         }
         return false;
