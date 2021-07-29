@@ -86,7 +86,7 @@ public class XmlUtils
                     serializer.cdsect( parser.getText() );
                     break;
                 case XmlPullParser.ENTITY_REF:
-                    serializer.entityRef( parser.getText() );
+                    serializer.entityRef( parser.getName() );
                     break;
                 case XmlPullParser.IGNORABLE_WHITESPACE:
                     serializer.ignorableWhitespace( normalize( parser.getText() ) );

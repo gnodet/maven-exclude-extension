@@ -10,6 +10,7 @@
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
+        <foo>&lt;&gt;</foo>
     </properties>
 
     <modules>
