@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.jboss.fuse.maven.it.camel</groupId>
+    <artifactId>parent</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <properties>
+        <maven.compiler.release>11</maven.compiler.release>
+        <foo>&lt;&gt;</foo>
+
+        <commons-beanutils-version>1.9.4</commons-beanutils-version>
+        <commons-codec-version>1.15</commons-codec-version>
+        <commons-collections-version>3.2.2</commons-collections-version>
+        <commons-collections4-version>4.4</commons-collections4-version>
+        <commons-compress-version>1.20</commons-compress-version>
+        <commons-configuration-version>1.9</commons-configuration-version>
+        <commons-configuration2-version>2.7</commons-configuration2-version>
+        <commons-csv-version>1.8</commons-csv-version>
+    </properties>
+
+    <modules>
+        <module>components</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- external deps -->
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>3.3.0</version>
+            </dependency>
+            <!-- first dep -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>module-1</artifactId>
+                <version>1.0-SNAPSHOT</version>
+            </dependency>
+            <!-- second dep -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>module-2</artifactId>
+                <version>1.0-SNAPSHOT</version>
+            </dependency>
+
+            <dependency>
+                <groupId>commons-beanutils</groupId>
+                <artifactId>commons-beanutils</artifactId>
+                <version>${commons-beanutils-version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>${commons-codec-version}</version>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.8.1</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
