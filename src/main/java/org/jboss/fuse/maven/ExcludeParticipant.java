@@ -131,8 +131,9 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                 moduleFile = new File(moduleFile, "pom.xml");
             }
             MavenProject child = projectsByPomLocation.get(moduleFile);
-            if (child != null && !exclusions.isMatchingProject(child)) {
+            if (child != null && exclusions.isMatchingProject(child)) {
                 removedModules.add(i);
+                LOGGER.debug("Removing module {} from {}", module, project);
             }
         }
         if (!removedModules.isEmpty()) {
