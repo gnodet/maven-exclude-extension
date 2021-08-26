@@ -16,6 +16,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import javax.inject.Named;
+import javax.inject.Singleton;
 
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
@@ -34,6 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Named
+@Singleton
 public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ExcludeParticipant.class);
@@ -41,6 +43,12 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
     //
     // AbstractMavenLifecycleParticipant
     //
+
+    public ExcludeParticipant() {
+        LOGGER.debug("***********************************************************");
+        LOGGER.debug("ExcludeExtension created");
+        LOGGER.debug("***********************************************************");
+    }
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
@@ -59,7 +67,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             }
             LOGGER.debug("***********************************************************");
             LOGGER.info("ExcludeExtension initialized");
-            LOGGER.debug("Using following exclusions: {}", exclusions);
+            LOGGER.info("Using following exclusions: {}", exclusions);
             LOGGER.debug("***********************************************************");
             Map<File, MavenProject> projectsByPomLocation =  session.getAllProjects().stream()
                     .collect(Collectors.toMap(MavenProject::getFile, Function.identity()));
