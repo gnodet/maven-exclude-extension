@@ -46,6 +46,8 @@ public class BufferingParser implements XmlPullParser
     @SuppressWarnings( "checkstyle:VisibilityModifier" )
     public static class Event
     {
+        public int line;
+        public int column;
         public int event;
         public String name;
         public String prefix;
@@ -487,6 +489,8 @@ public class BufferingParser implements XmlPullParser
     {
         Event event = new Event();
         XmlPullParser pp = xmlPullParser;
+        event.line = xmlPullParser.getLineNumber();
+        event.column = xmlPullParser.getColumnNumber();
         event.event = xmlPullParser.getEventType();
         switch ( event.event )
         {

@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
@@ -22,6 +23,7 @@ import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
+import org.apache.maven.model.InputLocation;
 import org.apache.maven.model.Model;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.ReaderFactory;
@@ -54,17 +56,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
         File file = new File(session.getRequest().getMultiModuleProjectDirectory(), ".mvn/excludes.txt");
         if (file.canRead()) {
-            File reactorDirectory = Optional.ofNullable(session.getRequest().getBaseDirectory())
-                    .map(File::new).orElse(null);
-            ExcludePattern exclusions;
-            try {
-                exclusions = new ExcludePattern(reactorDirectory, Files.readAllLines(file.toPath(), Charset.defaultCharset()).stream()
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .collect(Collectors.toList()));
-            } catch (IOException e) {
-                throw new MavenExecutionException("Unable to read exclusions", e);
-            }
+            ExcludePattern exclusions = getExcludePattern(session, file);
             LOGGER.debug("***********************************************************");
             LOGGER.info("ExcludeExtension initialized");
             LOGGER.info("Using following exclusions: {}", exclusions);
@@ -84,8 +76,8 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                         newProjects.add(project);
                     }
                     // Remove modules
-                    Map<String, List<Integer>> removed = excludeFromPom(exclusions, projectsByPomLocation, projectsByGroupArtifact,
-                            project);
+                    Map<String, List<InputLocation>> removed = excludeFromPom(exclusions, projectsByPomLocation,
+                            projectsByGroupArtifact, project);
 
                     if (!removed.isEmpty()) {
                         File pomFile = project.getFile();
@@ -109,7 +101,22 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         }
     }
 
-    private void rewritePom(MavenProject project, File pomFile, Map<String, List<Integer>> removed, XmlStreamReader in)
+    private ExcludePattern getExcludePattern(MavenSession session, File file) throws MavenExecutionException {
+        File reactorDirectory = Optional.ofNullable(session.getRequest().getBaseDirectory())
+                .map(File::new).orElse(null);
+        ExcludePattern exclusions;
+        try {
+            exclusions = new ExcludePattern(reactorDirectory, Files.readAllLines(file.toPath(), Charset.defaultCharset()).stream()
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toList()));
+        } catch (IOException e) {
+            throw new MavenExecutionException("Unable to read exclusions", e);
+        }
+        return exclusions;
+    }
+
+    private void rewritePom(MavenProject project, File pomFile, Map<String, List<InputLocation>> removed, XmlStreamReader in)
             throws XmlPullParserException, IOException {
 
         File excludePomFile = new File(pomFile.getParentFile(), ".exclude-pom.xml");
@@ -122,15 +129,15 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         project.setPomFile(excludePomFile);
     }
 
-
-    private Map<String, List<Integer>> excludeFromPom(
+    private Map<String, List<InputLocation>> excludeFromPom(
             ExcludePattern exclusions,
             Map<File, MavenProject> projectsByPomLocation,
             Map<String, MavenProject> projectsByGroupArtifact,
             MavenProject project) {
         Model model = project.getModel();
-        Map<String, List<Integer>> removed = new HashMap<>();
-        List<Integer> removedModules = new ArrayList<>();
+        Map<String, List<InputLocation>> removed = new HashMap<>();
+        List<InputLocation> removedModules = new ArrayList<>();
+        List<Integer> removedIndices = new ArrayList<>();
         for (int i = 0; i < model.getModules().size(); i++) {
             String module = model.getModules().get(i);
             module = module.replace('\\', File.separatorChar).replace('/', File.separatorChar);
@@ -140,17 +147,22 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             }
             MavenProject child = projectsByPomLocation.get(moduleFile);
             if (child != null && exclusions.isMatchingProject(child)) {
-                removedModules.add(i);
+                InputLocation loc = model.getLocation("modules");
+                if (loc != null) {
+                    removedModules.add(loc.getLocation(i));
+                }
+                removedIndices.add(i);
                 LOGGER.debug("Removing module {} from {}", module, project);
             }
         }
-        if (!removedModules.isEmpty()) {
+        if (!removedIndices.isEmpty()) {
             removed.put("modules", removedModules);
-            removeIndices(model.getModules(), removedModules);
+            removeIndices(model.getModules(), removedIndices);
+            removedIndices.clear();
         }
         // Remove dependency management
         if (model.getDependencyManagement() != null) {
-            List<Integer> removedDepMgmt = new ArrayList<>();
+            List<InputLocation> removedDepMgmt = new ArrayList<>();
             List<Dependency> dependencies = model.getDependencyManagement().getDependencies();
             for (int i = 0; i < dependencies.size(); i++) {
                 Dependency dependency = dependencies.get(i);
@@ -163,17 +175,19 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                     remove = exclusions.isMatchingDependency(dependency);
                 }
                 if (remove) {
-                    removedDepMgmt.add(i);
+                    removedDepMgmt.add(dependency.getLocation(""));
+                    removedIndices.add(i);
                     LOGGER.debug("Removing managed dependency {} from {}", ga, project);
                 }
             }
             if (!removedDepMgmt.isEmpty()) {
                 removed.put("dependencyManagement/dependencies", removedDepMgmt);
-                removeIndices(dependencies, removedDepMgmt);
+                removeIndices(dependencies, removedIndices);
+                removedIndices.clear();
             }
         }
         // Remove dependencies
-        List<Integer> removedDeps = new ArrayList<>();
+        List<InputLocation> removedDeps = new ArrayList<>();
         List<Dependency> dependencies = model.getDependencies();
         List<String> removedGa = new ArrayList<>();
         for (int i = 0; i < dependencies.size(); i++) {
@@ -187,14 +201,15 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                 remove = exclusions.isMatchingDependency(dependency);
             }
             if (remove) {
-                removedDeps.add(i);
+                removedDeps.add(dependency.getLocation(""));
+                removedIndices.add(i);
                 removedGa.add(ga);
                 LOGGER.debug("Removing dependency {} from {}", ga, project);
             }
         }
         if (!removedDeps.isEmpty()) {
             removed.put("dependencies", removedDeps);
-            removeIndices(dependencies, removedDeps);
+            removeIndices(dependencies, removedIndices);
         }
         return removed;
     }
@@ -204,13 +219,13 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
     }
 
     static class ExclusionParser extends BufferingParser {
-        private final Map<String, List<Integer>> removed;
+        private final Map<String, List<InputLocation>> removed;
         private boolean inModules;
         private boolean inDepMgmt;
         private boolean inDependencies;
         private List<Event> buffer;
 
-        public ExclusionParser(MXParser mxParser, Map<String, List<Integer>> removed) {
+        public ExclusionParser(MXParser mxParser, Map<String, List<InputLocation>> removed) {
             super(mxParser);
             this.removed = removed;
         }
@@ -255,11 +270,13 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             List<Event> tmpBuffer = null;
             List<Event> spcBuffer = new ArrayList<>();
             StringBuilder sb = null;
-            List<Integer> toRemove = removed.get(key);
+            List<InputLocation> toRemove = removed.get(key);
             if (toRemove != null) {
                 int index = 0;
+                boolean discard = false;
                 for (Event e : buffer) {
                     if (e.event == START_TAG && nodeName.equals(e.name)) {
+                        discard = toRemove.stream().anyMatch(l -> l.getLineNumber() == e.line && l.getColumnNumber() == e.column);
                         tmpBuffer = new ArrayList<>();
                         tmpBuffer.add(e);
                         sb = new StringBuilder();
@@ -268,7 +285,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                         if (e.event == TEXT) {
                             sb.append(e.text);
                         } else if (e.event == END_TAG && nodeName.equals(e.name)) {
-                            if (!toRemove.contains(index)) {
+                            if (!discard) {
                                 newBuffer.addAll(spcBuffer);
                                 newBuffer.addAll(tmpBuffer);
                             }
