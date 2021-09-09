@@ -9,13 +9,14 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
 
@@ -40,16 +41,16 @@ import org.slf4j.LoggerFactory;
 @Singleton
 public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(ExcludeParticipant.class);
+    private final Logger logger = LoggerFactory.getLogger(getClass());
 
     //
     // AbstractMavenLifecycleParticipant
     //
 
     public ExcludeParticipant() {
-        LOGGER.debug("***********************************************************");
-        LOGGER.debug("ExcludeExtension created");
-        LOGGER.debug("***********************************************************");
+        logger.debug("***********************************************************");
+        logger.debug("ExcludeExtension created");
+        logger.debug("***********************************************************");
     }
 
     @Override
@@ -57,10 +58,10 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         File file = new File(session.getRequest().getMultiModuleProjectDirectory(), ".mvn/excludes.txt");
         if (file.canRead()) {
             ExcludePattern exclusions = getExcludePattern(session, file);
-            LOGGER.debug("***********************************************************");
-            LOGGER.info("ExcludeExtension initialized");
-            LOGGER.info("Using following exclusions: {}", exclusions);
-            LOGGER.debug("***********************************************************");
+            logger.debug("***********************************************************");
+            logger.info("ExcludeExtension initialized");
+            logger.info("Using following exclusions: {}", exclusions);
+            logger.debug("***********************************************************");
             Map<File, MavenProject> projectsByPomLocation =  session.getAllProjects().stream()
                     .collect(Collectors.toMap(MavenProject::getFile, Function.identity()));
             Map<String, MavenProject> projectsByGroupArtifact =  session.getAllProjects().stream()
@@ -70,7 +71,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
             for (MavenProject project : session.getAllProjects()) {
                 // Remove this project completely
                 if (!exclusions.isMatchingProject(project)) {
-                    LOGGER.debug("Project included: " + project);
+                    logger.debug("Project included: " + project);
                     newAllProjects.add(project);
                     if (session.getProjects().contains(project)) {
                         newProjects.add(project);
@@ -89,15 +90,15 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                         }
                     }
                 } else {
-                    LOGGER.debug("Project excluded: " + project);
+                    logger.debug("Project excluded: " + project);
                 }
             }
             session.setAllProjects(newAllProjects);
             session.setProjects(newProjects);
         } else {
-            LOGGER.debug( "*****************************************************************************" );
-            LOGGER.warn( "ExcludeExtension initialized but no exclusions provided in ./mvn/excludes.txt" );
-            LOGGER.debug( "*****************************************************************************" );
+            logger.debug( "*****************************************************************************" );
+            logger.warn( "ExcludeExtension initialized but no exclusions provided in ./mvn/excludes.txt" );
+            logger.debug( "*****************************************************************************" );
         }
     }
 
@@ -152,7 +153,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                     removedModules.add(loc.getLocation(i));
                 }
                 removedIndices.add(i);
-                LOGGER.debug("Removing module {} from {}", module, project);
+                logger.debug("Removing module {} from {}", module, project);
             }
         }
         if (!removedIndices.isEmpty()) {
@@ -177,7 +178,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                 if (remove) {
                     removedDepMgmt.add(dependency.getLocation(""));
                     removedIndices.add(i);
-                    LOGGER.debug("Removing managed dependency {} from {}", ga, project);
+                    logger.debug("Removing managed dependency {} from {}", ga, project);
                 }
             }
             if (!removedDepMgmt.isEmpty()) {
@@ -204,7 +205,7 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
                 removedDeps.add(dependency.getLocation(""));
                 removedIndices.add(i);
                 removedGa.add(ga);
-                LOGGER.debug("Removing dependency {} from {}", ga, project);
+                logger.debug("Removing dependency {} from {}", ga, project);
             }
         }
         if (!removedDeps.isEmpty()) {
@@ -312,18 +313,22 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         }
     }
 
-    static class ExcludePattern {
+    class ExcludePattern {
         private final List<String> selectors;
-        private final List<String> gaSelectors;
+        private final Map<String, Set<String>> gaSelectors;
         private final Map<File, String> fileSelectors;
         private final Map<File, String> dirSelectors;
 
         public ExcludePattern(File reactorDirectory, List<String> selectors) {
             this.selectors = selectors;
             // [groupId]:artifactId
-            this.gaSelectors = selectors.stream()
-                    .filter(s -> s.indexOf(':') >= 0)
-                    .collect(Collectors.toList());
+            this.gaSelectors = new HashMap<>();
+            for (String s : selectors) {
+                int idx = s.indexOf(':');
+                if (idx >= 0) {
+                    gaSelectors.computeIfAbsent(s.substring(0, idx), k -> new HashSet<>()).add(s.substring(idx + 1));
+                }
+            }
             this.fileSelectors = new HashMap<>();
             this.dirSelectors = new HashMap<>();
             for (String selector : selectors) {
@@ -339,14 +344,13 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
         }
 
         public boolean isMatchingDependency(Dependency dependency) {
-            String id = ':' + dependency.getArtifactId();
-            if (gaSelectors.contains(id)) {
-                LOGGER.debug("Dependency {} matches '{}'", dependency, id);
+            if (gaSelectors.get("").contains(dependency.getArtifactId())) {
+                logger.debug("Dependency {} matches ':{}'", dependency, dependency.getArtifactId());
                 return true;
             }
-            id = dependency.getGroupId() + id;
-            if (gaSelectors.contains(id)) {
-                LOGGER.debug("Dependency {} matches '{}'", dependency, id);
+
+            if (gaSelectors.computeIfAbsent(dependency.getGroupId(), k -> new HashSet<>()).contains(dependency.getArtifactId())) {
+                logger.debug("Dependency {} matches '{}:{}'", dependency, dependency.getGroupId(), dependency.getArtifactId());
                 return true;
             }
             return false;
@@ -354,23 +358,21 @@ public class ExcludeParticipant extends AbstractMavenLifecycleParticipant {
 
         public boolean isMatchingProject(MavenProject project) {
             // [groupId]:artifactId
-            String id = ':' + project.getArtifactId();
-            if (gaSelectors.contains(id)) {
-                LOGGER.debug("Project {} matches '{}'", project, id);
+            if (gaSelectors.get("").contains(project.getArtifactId())) {
+                logger.debug("Project {} matches ':{}'", project, project.getArtifactId());
                 return true;
             }
-            id = project.getGroupId() + id;
-            if (gaSelectors.contains(id)) {
-                LOGGER.debug("Project {} matches '{}'", project, id);
+            if (gaSelectors.computeIfAbsent(project.getGroupId(), k -> new HashSet<>()).contains(project.getArtifactId())) {
+                logger.debug("Project {} matches '{}:{}'", project, project.getGroupId(), project.getArtifactId());
                 return true;
             }
             // relative path, e.g. "sub", "../sub" or "."
             if (fileSelectors.containsKey(project.getFile())) {
-                LOGGER.debug("Project {} matches '{}'", project, fileSelectors.get(project.getFile()));
+                logger.debug("Project {} matches '{}'", project, fileSelectors.get(project.getFile()));
                 return true;
             }
             if (dirSelectors.containsKey(project.getBasedir())) {
-                LOGGER.debug("Project {} matches '{}'", project, dirSelectors.get(project.getBasedir()));
+                logger.debug("Project {} matches '{}'", project, dirSelectors.get(project.getBasedir()));
                 return true;
             }
             return false;
