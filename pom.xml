@@ -5,7 +5,7 @@
 
   <groupId>org.jboss.fuse.maven</groupId>
   <artifactId>maven-exclude-extension</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1-SNAPSHOT</version>
 
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
@@ -15,7 +15,7 @@
     <connection>scm:git:https://github.com/gnodet/maven-exclude-extension.git</connection>
     <developerConnection>scm:git:https://github.com/gnodet/maven-exclude-extension.git</developerConnection>
     <url>https://github.com/gnodet/maven-exclude-extension</url>
-    <tag>maven-exclude-extension-0.1.0</tag>
+    <tag>head</tag>
   </scm>
 
   <distributionManagement>
